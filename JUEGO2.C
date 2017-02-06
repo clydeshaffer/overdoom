@@ -122,6 +122,9 @@ float viewerAngleCos = 1;
 float viewer_z_pos = 1;
 float viewer_height = 10;
 float viewer_knee = 5;
+
+const float darkness_depth = 40;
+
 Vector2 viewerPosition;
 Sector* viewerCurrentSector; 
 
@@ -154,6 +157,30 @@ void debug_pixel(byte color) {
 
 int failsBounds(int x, int y) {
 	return (x < 0) || (x >= SCREEN_WIDTH) || (y < 0) || (y >= SCREEN_HEIGHT);
+}
+
+
+void setup_palette(byte *unshaded_colors) {
+	int i, k;
+	byte r, g, b,
+		rstep, gstep, bstep;
+	outp(0x03c8, 128);
+	for(i = 0; i < 8; i++) {
+		r = unshaded_colors[(i * 3)],
+		g = unshaded_colors[(i*3) + 1],
+		b = unshaded_colors[(i*3) + 2],
+		rstep = r >> 4,
+		gstep = g >> 4,
+		bstep = b >> 4;
+		for(k = 0; k < 16; k++) {
+			outp(0x03c9, r);
+			outp(0x03c9, g);
+			outp(0x03c9, b);
+			r -= rstep;
+			g -= gstep;
+			b -= bstep;
+		}
+	}
 }
 
 void vert(int xpos, int ystart, int ylen, byte color) {
@@ -625,8 +652,10 @@ void draw_sector(Sector s, float leftEdge, float rightEdge) {
 	int i;
 	Vector2 leftSide, rightSide;
 	float subLeftEdge, subRightEdge;
+	float middleY;
 	Sector *neighbor;
 	for(i = 0; i < s.corner_count; i++) {
+		byte my_color;
 		leftSide = vec_trans_world(world_vertex_list[s.corners[i]]);
 		rightSide = vec_trans_world(world_vertex_list[s.corners[(i+1)%s.corner_count]]);
 
@@ -635,6 +664,11 @@ void draw_sector(Sector s, float leftEdge, float rightEdge) {
 
 			clip_wall(&leftSide, &rightSide, leftEdge, rightEdge);
 
+			middleY = (leftSide.y + rightSide.y) / 2;
+			middleY = min(middleY, darkness_depth);
+			my_color = (byte) (middleY * 16 / darkness_depth);
+			my_color += 128;
+			my_color += (s.color_offset % 8) << 4;
 
 			subLeftEdge = leftSide.x / leftSide.y;
 			subRightEdge = rightSide.x / rightSide.y;
@@ -652,7 +686,7 @@ void draw_sector(Sector s, float leftEdge, float rightEdge) {
 					draw_sector(world_sector_list[s.neighbors[i]], subLeftEdge, subRightEdge);
 					ceiling_color = s.ceiling_color;
 					ground_color = s.ground_color;
-					wall_color = (i+1 + s.color_offset) % NUM_COLORS;
+					wall_color = my_color;
 					draw_wall(world_vertex_list[s.corners[i]],
 						world_vertex_list[s.corners[(i+1)%s.corner_count]],
 						s.floor, s.ceiling,
@@ -673,7 +707,7 @@ void draw_sector(Sector s, float leftEdge, float rightEdge) {
 				} else {
 					ceiling_color = s.ceiling_color;
 					ground_color = s.ground_color;
-					wall_color = (i+1 + s.color_offset) % NUM_COLORS;
+					wall_color = my_color;
 					draw_wall(world_vertex_list[s.corners[i]], world_vertex_list[s.corners[(i+1)%s.corner_count]], s.floor, s.ceiling, subLeftEdge, subRightEdge, WALL | CEILING | FLOOR);
 				}
 			}
@@ -762,7 +796,7 @@ int load_sectors_from_file(char* filename) {
 			printf("invalid format for corner count in sector %d\n", i);
 			return 0;
 		}
-		world_sector_list[i].color_offset = i * 16;
+		world_sector_list[i].color_offset = i;
 		world_sector_list[i].ceiling_color = (i % 8) + 21;
 		world_sector_list[i].ground_color = (i % 8) + 20;
 		world_sector_list[i].corners = malloc(sizeof(int) * world_sector_list[i].corner_count);
@@ -819,6 +853,16 @@ void main()
 	bool found_next_sector = false;
 	int* keymap;
 	float frame_duration;
+	byte unshaded_colors[] = {
+		64,  0,  0,
+		 0, 64,  0,
+		 0,  0, 64,
+		 0, 64, 64,
+		64,  0, 64,
+		64, 64,  0,
+		64, 64, 64,
+		13, 13, 51
+	};
 	word start;
 	Vector2 old_position;
 
@@ -845,6 +889,8 @@ void main()
 	init_keyboard();
 
 	set_mode(VGA_256_COLOR_MODE);
+
+	setup_palette(unshaded_colors);
 
 	screen_top_right.x = SCREEN_WIDTH - 1;
 
@@ -892,7 +938,7 @@ void main()
 
 		memcpy(VGA, graphic_buffer, 64000L);
 		frame_duration = (*my_clock - start) / 18.2;
-		printf("%.3f\r", frame_duration);
+		/*printf("%.3f\r", frame_duration);*/
 		/*printf("%s\r", debug_text);*/
 
 		keystates = update_keystates(keystates,keymap, 8);
