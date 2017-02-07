@@ -45,6 +45,10 @@ Vector2 vec_rotate_faster(Vector2 v, float mysin, float mycos) {
     return result;
 }
 
+float vec_square_mag(Vector2 v) {
+    return v.x * v.x + v.y * v.y;
+}
+
 float vec_scross(Vector2 a, Vector2 b) {
     return a.x * b.y - a.y * b.x;
 }

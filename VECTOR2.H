@@ -19,6 +19,8 @@ Vector2 vec_rotate_slow(Vector2 v, float radians);
 
 Vector2 vec_rotate_faster(Vector2 v, float sin, float cos);
 
+float vec_square_mag(Vector2 v);
+
 float vec_scross(Vector2 a, Vector2 b);
 
 float vec_dot(Vector2 a, Vector2 b);

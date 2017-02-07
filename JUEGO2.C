@@ -15,6 +15,10 @@
 #define SCREEN_HEIGHT 200
 #define NUM_COLORS 256
 
+#define GRAD_NONE 0
+#define GRAD_H 1
+#define GRAD_V 2
+
 #define WALL 1
 #define CEILING 2
 #define FLOOR 4
@@ -59,10 +63,13 @@ byte graphic_buffer[64000L];
 byte ceiling_color = 52;
 byte ground_color = 114;
 byte wall_color = 1;
+byte wall_color_left = 0;
+byte wall_color_right = 0;
 
 word debug_cursor = 0;
 
 byte trape_heights[SCREEN_WIDTH];
+byte *gradient_buffer;
 
 int world_vertex_count;
 Vector2* world_vertex_list;
@@ -72,6 +79,11 @@ Vector2 screen_bottom_left;
 Vector2 screen_bottom_right;
 
 float viewAngleTan = 1.732;
+
+typedef struct Viewport
+{
+	float top, bottom, left, right;
+} Viewport;
 
 typedef struct Sector
 {
@@ -123,7 +135,7 @@ float viewer_z_pos = 1;
 float viewer_height = 10;
 float viewer_knee = 5;
 
-const float darkness_depth = 40;
+const float darkness_depth = 400;
 
 Vector2 viewerPosition;
 Sector* viewerCurrentSector; 
@@ -169,9 +181,9 @@ void setup_palette(byte *unshaded_colors) {
 		r = unshaded_colors[(i * 3)],
 		g = unshaded_colors[(i*3) + 1],
 		b = unshaded_colors[(i*3) + 2],
-		rstep = r >> 4,
-		gstep = g >> 4,
-		bstep = b >> 4;
+		rstep = r >> 5,
+		gstep = g >> 5,
+		bstep = b >> 5;
 		for(k = 0; k < 16; k++) {
 			outp(0x03c9, r);
 			outp(0x03c9, g);
@@ -183,18 +195,31 @@ void setup_palette(byte *unshaded_colors) {
 	}
 }
 
-void vert(int xpos, int ystart, int ylen, byte color) {
+byte depth_to_shade(float depth) {
+	depth = 16 * min(depth, darkness_depth) / darkness_depth;
+	if(depth > 15) depth = 15;
+	else if(depth < 1) depth = 1;
+	return (byte)((int) depth);
+}
+
+void vert(int xpos, int ystart, int ylen, byte color, int gradient_mode) {
 	int i;
-	int k;
+	int k, g;
+	byte drawn_color[3];
+	drawn_color[GRAD_NONE] = color;
+	drawn_color[GRAD_H] = gradient_buffer[xpos];
 	if(ylen <= 0) return;
 	if(ystart + ylen < 0) return;
 	ystart = maxOf(ystart, 0);
+	g = ystart;
 	k = (ystart << 8) + (ystart << 6);
 	if(ystart + ylen > SCREEN_HEIGHT) {
 		ylen = SCREEN_HEIGHT - ystart;
 	}
 	for(i = 0; i < ylen; i++) {
-		graphic_buffer[k + xpos] = color;
+		drawn_color[GRAD_V] = gradient_buffer[g];
+		g++;
+		graphic_buffer[k + xpos] = drawn_color[gradient_mode];
 		k += SCREEN_WIDTH;
 	}
 	return;
@@ -204,6 +229,23 @@ void rect(int xpos, int ypos, int width, int height, byte color) {
 	int i, addr = times320(ypos) + xpos;
 	for(i = 0; i < height; i++) {
 		memset(&(graphic_buffer[addr]), color, width);
+		addr += SCREEN_WIDTH;
+	}
+}
+
+void grad_rect_h(int xpos, int ypos, int width, int height) {
+	int i, addr = times320(ypos) + xpos;
+	for(i = 0; i < height; i++) {
+		/*memset(&(graphic_buffer[addr]), color, width);*/
+		memcpy(&(graphic_buffer[addr]), gradient_buffer+xpos, width);
+		addr += SCREEN_WIDTH;
+	}
+}
+
+void grad_rect_v(int xpos, int ypos, int width, int height) {
+	int i, addr = times320(ypos) + xpos;
+	for(i = 0; i < height; i++) {
+		memset(&(graphic_buffer[addr]), gradient_buffer[ypos+i], width);
 		addr += SCREEN_WIDTH;
 	}
 }
@@ -286,7 +328,7 @@ void draw_line2(int ax, int ay, int bx, int by, byte color) {
 	}
 }
 
-void set_heights(int ax, int ay, int bx, int by) {
+void interpolate_buffer(int ax, int ay, int bx, int by, byte *target_array) {
 	int dx = bx - ax,
 		dy = by - ay,
 		absx = abs(dx),
@@ -299,7 +341,9 @@ void set_heights(int ax, int ay, int bx, int by) {
 
 	int *dmajor, *smajor, *sminor, *stminor, *absmajor, *absminor, *pmajor, *pminor;
 
-	memset(trape_heights, 0, SCREEN_WIDTH);
+	if(ay == by) {
+		memset(target_array+min(ax, bx), by, absx);
+	}
 
 	if(abs(dx) > abs(dy)) {
 		dmajor = &dx;
@@ -321,9 +365,24 @@ void set_heights(int ax, int ay, int bx, int by) {
 		pminor = &px;
 	}
 
-	for(i = 0; i < 8; i++) {
-		trape_heights[ax - i] = ay;
-		trape_heights[bx + i] = by;
+	target_array[ax] = ay;
+
+	if(ax < bx) {
+		for(i = 0; i <= ax; i++) {
+			target_array[i] = ay;
+		}
+
+		for(i = bx; i < SCREEN_WIDTH; i++) {
+			target_array[i] = by;
+		}
+	} else {
+		for(i = 0; i <= bx; i++) {
+			target_array[i] = by;
+		}
+
+		for(i = ax; i < SCREEN_WIDTH; i++) {
+			target_array[i] = ay;
+		}
 	}
 
 	for(i = 0; i <= abs(*dmajor); i ++) {
@@ -334,12 +393,12 @@ void set_heights(int ax, int ay, int bx, int by) {
 		}
 		*pmajor += *smajor;
 		if(px > 0 && px < SCREEN_WIDTH) {
-			trape_heights[px] = clamp(py, 0, SCREEN_HEIGHT);
+			target_array[px] = clamp(py, 0, SCREEN_WIDTH);
 		}
 	}
 }
 
-void draw_wall_screen(int ax, int ay, int bx, int by, byte color) {
+void draw_wall_screen(int ax, int ay, int bx, int by, int gradient_type, byte color) {
 	int dx = bx - ax,
 		dy = by - ay,
 		absx = abs(dx),
@@ -349,19 +408,25 @@ void draw_wall_screen(int ax, int ay, int bx, int by, byte color) {
 		stx = absx >> 1,
 		sty = absy >> 1,
 		i, height, px = ax, py = ay,
-		lower_top = maxOf(ay,by),
-		higher_bottom = minOf(trape_heights[ax+1], trape_heights[bx-1]);
+		lower_top = max(ay,by),
+		higher_bottom = min(trape_heights[ax+1], trape_heights[bx-1]);
+	byte grad_color_h, *drawn_color;
 
 	if(failsBounds(ax,ay)) return;
 	if(failsBounds(bx,by)) return;
 	
+	if(gradient_type == GRAD_H) {
+		drawn_color = &grad_color_h;
+	} else {
+		drawn_color = &color;
+	}
 
 	if(lower_top < higher_bottom) {
-		vert(ax, ay, lower_top - ay, color);
-		vert(ax, higher_bottom, trape_heights[ax] - higher_bottom, color);
+		vert(ax, ay, lower_top - ay, color, gradient_type);
+		vert(ax, higher_bottom, trape_heights[ax] - higher_bottom, color, gradient_type);
 
-		vert(bx, by, lower_top - by, color);
-		vert(bx, higher_bottom, trape_heights[bx] - higher_bottom, color);
+		vert(bx, by, lower_top - by, color, gradient_type);
+		vert(bx, higher_bottom, trape_heights[bx] - higher_bottom, color, gradient_type);
 		if(absx > absy) {
 			for(i = 0; i <= absx; i ++) {
 				sty += absy;
@@ -370,10 +435,11 @@ void draw_wall_screen(int ax, int ay, int bx, int by, byte color) {
 					py += sy;
 				}
 				px += sx;
+				grad_color_h = gradient_buffer[px];
 				/*graphic_buffer[(py << 8) + (py << 6) + px] = color;*/
 				/*vert(px, py, trape_heights[px] - py, color);*/
-				vert(px, py, lower_top - py, color);
-				vert(px, higher_bottom, trape_heights[px] - higher_bottom, color);
+				vert(px, py, lower_top - py, *drawn_color, gradient_type);
+				vert(px, higher_bottom, trape_heights[px] - higher_bottom, *drawn_color, gradient_type);
 
 			}
 		} else {
@@ -384,15 +450,22 @@ void draw_wall_screen(int ax, int ay, int bx, int by, byte color) {
 					px += sx;
 				}
 				py += sy;
+				grad_color_h = gradient_buffer[px];
 				/*graphic_buffer[(py << 8) + (py << 6) + px] = color;*/
-				vert(px, py, lower_top - py, color);
-				vert(px, higher_bottom, trape_heights[px] - higher_bottom, color);
+				vert(px, py, lower_top - py, *drawn_color, gradient_type);
+				vert(px, higher_bottom, trape_heights[px] - higher_bottom, *drawn_color, gradient_type);
 			}
 		}
-		rect(ax, lower_top, absx+2, higher_bottom - lower_top, color);
+		if(gradient_type == GRAD_H) {
+			grad_rect_h(ax, lower_top, absx+2, higher_bottom - lower_top);
+		} else if(gradient_type == GRAD_V) {
+			grad_rect_v(ax, lower_top, absx+2, higher_bottom - lower_top);
+		} else {
+			rect(ax, lower_top, absx+2, higher_bottom - lower_top, color);
+		}
 	} else {
-		vert(px, py, trape_heights[px] - py, color);
-		vert(bx, by, trape_heights[bx] - by, color);
+		vert(px, py, trape_heights[px] - py, color, gradient_type);
+		vert(bx, by, trape_heights[bx] - by, color, gradient_type);
 		if(absx > absy) {
 			for(i = 0; i <= absx; i ++) {
 				sty += absy;
@@ -401,7 +474,7 @@ void draw_wall_screen(int ax, int ay, int bx, int by, byte color) {
 					py += sy;
 				}
 				px += sx;
-				vert(px, py, trape_heights[px] - py, color);
+				vert(px, py, trape_heights[px] - py, color, gradient_type);
 
 			}
 		} else {
@@ -412,7 +485,7 @@ void draw_wall_screen(int ax, int ay, int bx, int by, byte color) {
 					px += sx;
 				}
 				py += sy;
-				vert(px, py, trape_heights[px] - py, color);
+				vert(px, py, trape_heights[px] - py, color, gradient_type);
 			}
 		}
 	}
@@ -513,14 +586,15 @@ void clip_wall(Vector2 *pointA, Vector2 *pointB, float leftEdge, float rightEdge
 	}
 }
 
-void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float leftEdge, float rightEdge, int flags) {
+void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float leftEdge, float rightEdge, int portal_top, int portal_bottom, int flags) {
 	Vector2 lowerA;
 	Vector2 lowerB;
 	Vector2 crossing;
 	Vector2 viewEnd;
 	Vector2 leftEndPoint;
 	Vector2 rightEndPoint;
-	float a_clip, b_clip;
+	float a_clip, b_clip, far_depth;
+	int lower_top, higher_bottom;
 	bool top_on_screen, bottom_on_screen;
 
 	floor -= viewer_z_pos;
@@ -532,6 +606,8 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	pointB = vec_rotate_faster(pointB, viewerAngleSin, viewerAngleCos);
 
 	if(line_side(zeroV, pointA, pointB) > 0) return;
+
+	far_depth = max(vec_square_mag(pointA), vec_square_mag(pointB));
 
 	lowerA = pointA;
 	lowerB = pointB;
@@ -583,6 +659,9 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 
 	lowerA.x = pointA.x;
 	lowerB.x = pointB.x;
+
+
+	
 	/*if(color == 51) {
 		sprintf(debug_text, "%.2f %.2f %.2f %.2f", lowerA.x, lowerA.y, lowerB.x, lowerB.y);
 	}*/
@@ -594,22 +673,29 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	top_on_screen = clip_line_to_viewport(&pointA, &pointB);
 	bottom_on_screen = clip_line_to_viewport(&lowerA, &lowerB);
 
+	lower_top = maxOf(pointA.y, pointB.y);
+	higher_bottom = minOf(lowerA.y, lowerB.y);
+
 	if(top_on_screen && (flags & CEILING)) {
-		set_heights(pointA.x, pointA.y, pointB.x, pointB.y);
-		draw_wall_screen(pointA.x, 0, pointB.x, 0, ceiling_color); /* ceiling */
+		/*interpolate_buffer(0, 31, lower_top, 31 - depth_to_shade(far_depth), gradient_buffer);*/
+		/*memset(gradient_buffer, 0, SCREEN_WIDTH);*/
+		interpolate_buffer(pointA.x, pointA.y, pointB.x, pointB.y, trape_heights);
+		draw_wall_screen(pointA.x, 0, pointB.x, 0, GRAD_NONE, ceiling_color); /* ceiling */
 	}
 
 	memset(trape_heights, SCREEN_HEIGHT - 1, SCREEN_WIDTH);
 	if(bottom_on_screen) {
-		if(flags & FLOOR)
-			draw_wall_screen(lowerA.x, lowerA.y, lowerB.x, lowerB.y, ground_color); /* draw ground */
-		set_heights(lowerA.x, lowerA.y, lowerB.x, lowerB.y);
-	} else if(lowerA.y < 0) {
+		if(flags & FLOOR) {
+			/*interpolate_buffer(higher_bottom, 31 - depth_to_shade(far_depth), SCREEN_HEIGHT-1, 31, gradient_buffer);*/
+			draw_wall_screen(lowerA.x, lowerA.y, lowerB.x, lowerB.y, GRAD_NONE, ground_color); /* draw ground */
+		}
+		interpolate_buffer(lowerA.x, lowerA.y, lowerB.x, lowerB.y, trape_heights);
+	} else if(higher_bottom < 0) {
 		return;
 	}
 
 	if(flags & WALL) {
-		
+		/*interpolate_buffer(a_clip, wall_color_left, b_clip, wall_color_right, gradient_buffer);*/
 
 		if(top_on_screen) {
 			draw_wall_screen(
@@ -617,7 +703,8 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 			pointA.y,
 			pointB.x,
 			pointB.y,
-			wall_color);
+			GRAD_H,
+			0);
 
 			if(!(pointA.y > 0 && pointB.y > 0)) {
 				if(a_clip != pointA.x) {
@@ -626,7 +713,8 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 						0,
 						pointA.x,
 						0,
-						wall_color);
+						GRAD_H,
+						0);
 				}
 				if(b_clip != pointB.x) {
 					draw_wall_screen(
@@ -634,7 +722,8 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 					0,
 					b_clip,
 					0,
-					wall_color);
+					GRAD_H,
+					0);
 				}
 			}
 		} else if(!(pointA.y > 0 && pointB.y > 0)) {
@@ -643,19 +732,21 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 				0,
 				pointB.x,
 				0,
-				wall_color);
+				GRAD_H,
+				0);
 		}
 	}
 }
 
-void draw_sector(Sector s, float leftEdge, float rightEdge) {
+void draw_sector(Sector s, float leftEdge, float rightEdge, int portal_top, int portal_bottom) {
 	int i;
 	Vector2 leftSide, rightSide;
 	float subLeftEdge, subRightEdge;
-	float middleY;
 	Sector *neighbor;
 	for(i = 0; i < s.corner_count; i++) {
-		byte my_color;
+		byte base_color;
+		byte color_left;
+		byte color_right;
 		leftSide = vec_trans_world(world_vertex_list[s.corners[i]]);
 		rightSide = vec_trans_world(world_vertex_list[s.corners[(i+1)%s.corner_count]]);
 
@@ -664,11 +755,9 @@ void draw_sector(Sector s, float leftEdge, float rightEdge) {
 
 			clip_wall(&leftSide, &rightSide, leftEdge, rightEdge);
 
-			middleY = (leftSide.y + rightSide.y) / 2;
-			middleY = min(middleY, darkness_depth);
-			my_color = (byte) (middleY * 16 / darkness_depth);
-			my_color += 128;
-			my_color += (s.color_offset % 8) << 4;
+			base_color = 128 + ((s.color_offset % 8) << 4);
+			color_left = depth_to_shade(vec_square_mag(leftSide)) + base_color;
+			color_right = depth_to_shade(vec_square_mag(rightSide)) + base_color;
 
 			subLeftEdge = leftSide.x / leftSide.y;
 			subRightEdge = rightSide.x / rightSide.y;
@@ -680,35 +769,50 @@ void draw_sector(Sector s, float leftEdge, float rightEdge) {
 				subRightEdge = rightEdge;
 			}
 
-			if(subLeftEdge < subRightEdge) {
 
+
+			if(subLeftEdge < subRightEdge) {
 				if(s.neighbors[i] >= 0) {
-					draw_sector(world_sector_list[s.neighbors[i]], subLeftEdge, subRightEdge);
+					draw_sector(world_sector_list[s.neighbors[i]], subLeftEdge, subRightEdge, s.ceiling / max(leftSide.y, rightSide.y), s.floor / min(leftSide.y, rightSide.y));
 					ceiling_color = s.ceiling_color;
 					ground_color = s.ground_color;
-					wall_color = my_color;
+					wall_color = base_color;
+					wall_color_left = color_left;
+					wall_color_right = color_right;
+					interpolate_buffer(subLeftEdge * 180 + 160, color_left, subRightEdge * 180 + 160, color_right,gradient_buffer);
 					draw_wall(world_vertex_list[s.corners[i]],
 						world_vertex_list[s.corners[(i+1)%s.corner_count]],
 						s.floor, s.ceiling,
 						subLeftEdge, subRightEdge,
+						portal_top, portal_bottom,
 						CEILING | FLOOR);
 					if(world_sector_list[s.neighbors[i]].floor > s.floor)
 						draw_wall(world_vertex_list[s.corners[i]],
 							world_vertex_list[s.corners[(i+1)%s.corner_count]],
 							s.floor, world_sector_list[s.neighbors[i]].floor,
 							subLeftEdge, subRightEdge,
+							portal_top, portal_bottom,
 							WALL);
 					if(world_sector_list[s.neighbors[i]].ceiling < s.ceiling)
 						draw_wall(world_vertex_list[s.corners[i]],
 							world_vertex_list[s.corners[(i+1)%s.corner_count]],
 							world_sector_list[s.neighbors[i]].ceiling, s.ceiling,
 							subLeftEdge, subRightEdge,
+							portal_top, portal_bottom,
 							WALL);
 				} else {
 					ceiling_color = s.ceiling_color;
 					ground_color = s.ground_color;
-					wall_color = my_color;
-					draw_wall(world_vertex_list[s.corners[i]], world_vertex_list[s.corners[(i+1)%s.corner_count]], s.floor, s.ceiling, subLeftEdge, subRightEdge, WALL | CEILING | FLOOR);
+					wall_color = color_left;
+					wall_color_left = color_left;
+					wall_color_right = color_right;
+					interpolate_buffer(subLeftEdge * 180 + 160, color_left, subRightEdge * 180 + 160, color_right, gradient_buffer);
+					draw_wall(world_vertex_list[s.corners[i]],
+						world_vertex_list[s.corners[(i+1)%s.corner_count]],
+						s.floor, s.ceiling,
+						subLeftEdge, subRightEdge,
+						portal_top, portal_bottom,
+						WALL | CEILING | FLOOR);
 				}
 			}
 		}
@@ -875,6 +979,9 @@ void main()
 		return;
 	}
 
+	gradient_buffer = malloc(SCREEN_WIDTH);
+	memset(gradient_buffer, 0, SCREEN_WIDTH);
+
 	keymap = malloc(sizeof(int) * sizeof(int) * 8);
 	memset(keymap, 0, sizeof(int) * sizeof(int) * 8);
 	keymap[0] = 2;
@@ -904,7 +1011,7 @@ void main()
 		
 		start = *my_clock;
 
-		memset(graphic_buffer, 0, 64000L);
+		/*memset(graphic_buffer, 13, 64000L);*/
 
 		found_next_sector = false;
 		if(!point_inside_sector(viewerPosition, world_sector_list[current_sector])) {
@@ -926,7 +1033,7 @@ void main()
 		if(!found_next_sector) {
 			viewerPosition = old_position;
 		}
-		draw_sector(world_sector_list[current_sector], -0.5, 0.5);
+		draw_sector(world_sector_list[current_sector], -0.5, 0.5, 0, SCREEN_HEIGHT-1);
 
 		/*for(i = 0; i < world_sector_count; i++) {
 			sector_outline(world_sector_list[i]);
@@ -938,7 +1045,7 @@ void main()
 
 		memcpy(VGA, graphic_buffer, 64000L);
 		frame_duration = (*my_clock - start) / 18.2;
-		/*printf("%.3f\r", frame_duration);*/
+		/*printf("%.3f\r", frame_duration);*/ 
 		/*printf("%s\r", debug_text);*/
 
 		keystates = update_keystates(keystates,keymap, 8);
