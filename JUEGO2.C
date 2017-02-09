@@ -11,6 +11,9 @@
 #define VGA_256_COLOR_MODE 0x13
 #define VGA_TEXT_MODE 0x03
 
+#define INPUT_STATUS_1      0x03da
+#define VRETRACE            0x08
+
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 200
 #define NUM_COLORS 256
@@ -47,6 +50,8 @@
 #define TURNRIGHT_KEY 64
 #define JUMP_KEY 128
 
+/*#define DEBUGDELAY*/
+
 #define true 1
 #define false 0
 
@@ -78,6 +83,9 @@ Vector2 screen_top_right;
 Vector2 screen_bottom_left;
 Vector2 screen_bottom_right;
 
+int top_clip = 0;
+int bottom_clip = 200;
+
 float viewAngleTan = 1.732;
 
 typedef struct Viewport
@@ -95,6 +103,29 @@ typedef struct Sector
 	byte ground_color;
 	byte ceiling_color;
 } Sector;
+
+void wait_retrace() {
+	while ((inp(INPUT_STATUS_1) & VRETRACE));
+    while (!(inp(INPUT_STATUS_1) & VRETRACE));
+}
+
+void show_buffer() {
+	memcpy(VGA, graphic_buffer, 64000L);
+}
+
+bool request_debug_delay = false;
+
+#ifdef DEBUGDELAY
+void debug_delay() {
+	static byte counter = 0;
+	if(!request_debug_delay) return;
+	if(counter == 0) {
+		wait_retrace();
+		show_buffer();
+	}
+	counter+=32;
+}
+#endif
 
 int world_sector_count;
 Sector* world_sector_list;
@@ -216,11 +247,15 @@ void vert(int xpos, int ystart, int ylen, byte color, int gradient_mode) {
 	if(ystart + ylen > SCREEN_HEIGHT) {
 		ylen = SCREEN_HEIGHT - ystart;
 	}
+	#ifdef DEBUGDELAY
+	debug_delay();
+	#endif
 	for(i = 0; i < ylen; i++) {
 		drawn_color[GRAD_V] = gradient_buffer[g];
 		g++;
 		graphic_buffer[k + xpos] = drawn_color[gradient_mode];
 		k += SCREEN_WIDTH;
+		
 	}
 	return;
 }
@@ -230,6 +265,9 @@ void rect(int xpos, int ypos, int width, int height, byte color) {
 	for(i = 0; i < height; i++) {
 		memset(&(graphic_buffer[addr]), color, width);
 		addr += SCREEN_WIDTH;
+		#ifdef DEBUGDELAY
+		debug_delay();
+		#endif
 	}
 }
 
@@ -239,6 +277,9 @@ void grad_rect_h(int xpos, int ypos, int width, int height) {
 		/*memset(&(graphic_buffer[addr]), color, width);*/
 		memcpy(&(graphic_buffer[addr]), gradient_buffer+xpos, width);
 		addr += SCREEN_WIDTH;
+		#ifdef DEBUGDELAY
+		debug_delay();
+		#endif
 	}
 }
 
@@ -510,25 +551,25 @@ bool intersect(Vector2 a, Vector2 b, Vector2 c, Vector2 d, Vector2 *output)
     return true;
 }
 
-Outcode get_outcode(Vector2 v) {
+Outcode get_outcode(Vector2 v, int top, int bottom) {
 	Outcode code = 0;
+	if(v.y < top) {
+		code |= TOP;
+	} else if(v.y > (bottom)) { /* was SCREEN_HEIGHT-1*/
+		code |= BOTTOM;
+	}
 	if(v.x < 0) {
 		code |= LEFT;
-	} else if(v.x > (SCREEN_WIDTH-1)) {
+	} else if(v.x > (SCREEN_WIDTH-1)) { /*was SCREEN_WIDTH-1*/
 		code |= RIGHT;
-	}
-	if(v.y < 0) {
-		code |= TOP;
-	} else if(v.y > (SCREEN_HEIGHT-1)) {
-		code |= BOTTOM;
 	}
 	return code;
 }
 
 /* coen-sutherland algorithm */
-bool clip_line_to_viewport(Vector2 *pointA, Vector2 *pointB) {
-	Outcode outcodeA = get_outcode(*pointA),
-	outcodeB = get_outcode(*pointB),
+bool clip_line_to_viewport(Vector2 *pointA, Vector2 *pointB, int top, int bottom) {
+	Outcode outcodeA = get_outcode(*pointA, top, bottom),
+	outcodeB = get_outcode(*pointB, top, bottom),
 	outside_code;
 	Vector2 intersect_point,
 	originalA = *pointA,
@@ -547,11 +588,11 @@ bool clip_line_to_viewport(Vector2 *pointA, Vector2 *pointB) {
 			outside_code = outcodeA ? outcodeA : outcodeB;
 
 			if(outside_code & TOP) {
-				intersect_point.x = pointA->x + (pointB->x - pointA->x) * (0 - pointA->y) / (pointB->y - pointA->y);
-				intersect_point.y = 0;
+				intersect_point.x = pointA->x + (pointB->x - pointA->x) * (top - pointA->y) / (pointB->y - pointA->y);
+				intersect_point.y = top;
 			} else if(outside_code & BOTTOM) {
-				intersect_point.x = pointA->x + (pointB->x - pointA->x) * ((SCREEN_HEIGHT-1) - pointA->y) / (pointB->y - pointA->y);
-				intersect_point.y = SCREEN_HEIGHT-1;
+				intersect_point.x = pointA->x + (pointB->x - pointA->x) * ((bottom) - pointA->y) / (pointB->y - pointA->y);
+				intersect_point.y = bottom;
 			} else if(outside_code & LEFT) {
 				intersect_point.x = 0;
 				intersect_point.y = pointA->y + (pointB->y - pointA->y) * (0 - pointA->x) / (pointB->x - pointA->x);
@@ -563,10 +604,10 @@ bool clip_line_to_viewport(Vector2 *pointA, Vector2 *pointB) {
 
 		if(outcodeA == outside_code) {
 			*pointA = intersect_point;
-			outcodeA = get_outcode(*pointA);
+			outcodeA = get_outcode(*pointA, top, bottom);
 		} else {
 			*pointB = intersect_point;
-			outcodeB = get_outcode(*pointB);
+			outcodeB = get_outcode(*pointB, top, bottom);
 		}
 	}
 }
@@ -670,8 +711,8 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 		THEN CALCULATE HOW MUCH TO COMPENSATE SCREEN FILL */
 	a_clip = pointA.x;
 	b_clip = pointB.x;
-	top_on_screen = clip_line_to_viewport(&pointA, &pointB);
-	bottom_on_screen = clip_line_to_viewport(&lowerA, &lowerB);
+	top_on_screen = clip_line_to_viewport(&pointA, &pointB, portal_top, portal_bottom);
+	bottom_on_screen = clip_line_to_viewport(&lowerA, &lowerB, portal_top, portal_bottom);
 
 	lower_top = maxOf(pointA.y, pointB.y);
 	higher_bottom = minOf(lowerA.y, lowerB.y);
@@ -680,10 +721,10 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 		/*interpolate_buffer(0, 31, lower_top, 31 - depth_to_shade(far_depth), gradient_buffer);*/
 		/*memset(gradient_buffer, 0, SCREEN_WIDTH);*/
 		interpolate_buffer(pointA.x, pointA.y, pointB.x, pointB.y, trape_heights);
-		draw_wall_screen(pointA.x, 0, pointB.x, 0, GRAD_NONE, ceiling_color); /* ceiling */
+		draw_wall_screen(pointA.x, portal_top, pointB.x, portal_top, GRAD_NONE, ceiling_color); /* ceiling */
 	}
 
-	memset(trape_heights, SCREEN_HEIGHT - 1, SCREEN_WIDTH);
+	memset(trape_heights, (byte) portal_bottom, SCREEN_WIDTH);
 	if(bottom_on_screen) {
 		if(flags & FLOOR) {
 			/*interpolate_buffer(higher_bottom, 31 - depth_to_shade(far_depth), SCREEN_HEIGHT-1, 31, gradient_buffer);*/
@@ -706,32 +747,32 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 			GRAD_H,
 			0);
 
-			if(!(pointA.y > 0 && pointB.y > 0)) {
+			if(!(pointA.y > portal_top && pointB.y > portal_top)) {
 				if(a_clip != pointA.x) {
 					draw_wall_screen(
 						a_clip,
-						0,
+						portal_top,
 						pointA.x,
-						0,
+						portal_top,
 						GRAD_H,
 						0);
 				}
 				if(b_clip != pointB.x) {
 					draw_wall_screen(
 					pointB.x,
-					0,
+					portal_top,
 					b_clip,
-					0,
+					portal_top,
 					GRAD_H,
 					0);
 				}
 			}
-		} else if(!(pointA.y > 0 && pointB.y > 0)) {
+		} else if(!(pointA.y > portal_top && pointB.y > portal_top)) {
 			draw_wall_screen(
 				pointA.x,
-				0,
+				portal_top,
 				pointB.x,
-				0,
+				portal_top,
 				GRAD_H,
 				0);
 		}
@@ -743,6 +784,9 @@ void draw_sector(Sector s, float leftEdge, float rightEdge, int portal_top, int 
 	Vector2 leftSide, rightSide;
 	float subLeftEdge, subRightEdge;
 	Sector *neighbor;
+	if(portal_bottom - portal_top < 2) return;
+	if(portal_top < 0) portal_top = 0;
+	if(portal_bottom > 199) portal_bottom = 199;
 	for(i = 0; i < s.corner_count; i++) {
 		byte base_color;
 		byte color_left;
@@ -773,7 +817,11 @@ void draw_sector(Sector s, float leftEdge, float rightEdge, int portal_top, int 
 
 			if(subLeftEdge < subRightEdge) {
 				if(s.neighbors[i] >= 0) {
-					draw_sector(world_sector_list[s.neighbors[i]], subLeftEdge, subRightEdge, s.ceiling / max(leftSide.y, rightSide.y), s.floor / min(leftSide.y, rightSide.y));
+					draw_sector(world_sector_list[s.neighbors[i]], subLeftEdge, subRightEdge,
+						100 - (15 * (world_sector_list[s.neighbors[i]].ceiling - viewer_z_pos) / min(leftSide.y, rightSide.y)),
+						100 - (15 * (world_sector_list[s.neighbors[i]].floor - viewer_z_pos) / min(leftSide.y, rightSide.y)));
+					sprintf(debug_text, "%.3f", 0);
+						/*15 * s.ceiling / max(leftSide.y, rightSide.y) + 100, 15 * s.floor / min(leftSide.y, rightSide.y) + 100);*/
 					ceiling_color = s.ceiling_color;
 					ground_color = s.ground_color;
 					wall_color = base_color;
@@ -827,7 +875,7 @@ void sector_outline(Sector s) {
 		rightSide = vec_trans_world(world_vertex_list[s.corners[(i+1)%s.corner_count]]);
 		leftSide = coords_to_screen(leftSide);
 		rightSide = coords_to_screen(rightSide);
-		if(clip_line_to_viewport(&leftSide, &rightSide)) {
+		if(clip_line_to_viewport(&leftSide, &rightSide, 0, SCREEN_HEIGHT-1)) {
 			draw_line(leftSide.x, leftSide.y, rightSide.x, rightSide.y, 15);
 		}
 	}
@@ -1006,12 +1054,16 @@ void main()
 
 	screen_bottom_left.y = SCREEN_HEIGHT - 1;
 	
+				viewerAngle -= PI / 2;
+				viewerAngleSin = sin(viewerAngle);
+				viewerAngleCos = cos(viewerAngle);
+
 	/*draw_wall(2, 3, -10, 10, 13);*/
 	while(!(keystates & QUIT_KEY)) {
 		
 		start = *my_clock;
 
-		/*memset(graphic_buffer, 13, 64000L);*/
+		memset(graphic_buffer, 0, 64000L);
 
 		found_next_sector = false;
 		if(!point_inside_sector(viewerPosition, world_sector_list[current_sector])) {
@@ -1034,7 +1086,7 @@ void main()
 			viewerPosition = old_position;
 		}
 		draw_sector(world_sector_list[current_sector], -0.5, 0.5, 0, SCREEN_HEIGHT-1);
-
+		request_debug_delay = false;
 		/*for(i = 0; i < world_sector_count; i++) {
 			sector_outline(world_sector_list[i]);
 		}
@@ -1042,8 +1094,9 @@ void main()
 		draw_line(160, 100, 160, 102, 14);
 		draw_line(160, 100, 220, 190, 14);
 		draw_line(160, 100, 100, 190, 14);*/
+		wait_retrace();
 
-		memcpy(VGA, graphic_buffer, 64000L);
+		show_buffer();
 		frame_duration = (*my_clock - start) / 18.2;
 		/*printf("%.3f\r", frame_duration);*/ 
 		/*printf("%s\r", debug_text);*/
@@ -1085,6 +1138,10 @@ void main()
 				viewerAngle -= 0.1;
 				viewerAngleSin = sin(viewerAngle);
 				viewerAngleCos = cos(viewerAngle);
+			}
+
+			if(keystates & JUMP_KEY) {
+				request_debug_delay = true;
 			}
 		}
 	}
