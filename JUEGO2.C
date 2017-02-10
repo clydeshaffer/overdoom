@@ -5,18 +5,7 @@
 
 #include "Vector2.h"
 #include "keyb.h"
-
-#define VIDEO_INT 0x10
-#define SET_MODE 0x00
-#define VGA_256_COLOR_MODE 0x13
-#define VGA_TEXT_MODE 0x03
-
-#define INPUT_STATUS_1      0x03da
-#define VRETRACE            0x08
-
-#define SCREEN_WIDTH 320
-#define SCREEN_HEIGHT 200
-#define NUM_COLORS 256
+#include "vga.h"
 
 #define GRAD_NONE 0
 #define GRAD_H 1
@@ -32,7 +21,6 @@
 #define maxOf(a,b) (a>b)?a:b
 #define sgn(x) (x>0)?1:-(x<0)
 #define times320(y) ((y<<8)+(y<<6))
-#define pixel(x,y) graphic_buffer[(y<<8)+(y<<6)+x]
 #define clamp(x,a,b) (a>x)?a:((x<b)?x:b)
 
 #define INSIDE 0
@@ -55,23 +43,17 @@
 #define true 1
 #define false 0
 
-typedef unsigned char byte;
 typedef unsigned short word;
 typedef int bool;
 typedef int Outcode;
 
-byte *VGA=(byte *)0xA0000000L;
 word *my_clock=(word *)0x0000046C;
-
-byte graphic_buffer[64000L];
 
 byte ceiling_color = 52;
 byte ground_color = 114;
 byte wall_color = 1;
 byte wall_color_left = 0;
 byte wall_color_right = 0;
-
-word debug_cursor = 0;
 
 byte trape_heights[SCREEN_WIDTH];
 byte *gradient_buffer;
@@ -104,14 +86,6 @@ typedef struct Sector
 	byte ceiling_color;
 } Sector;
 
-void wait_retrace() {
-	while ((inp(INPUT_STATUS_1) & VRETRACE));
-    while (!(inp(INPUT_STATUS_1) & VRETRACE));
-}
-
-void show_buffer() {
-	memcpy(VGA, graphic_buffer, 64000L);
-}
 
 bool request_debug_delay = false;
 
@@ -181,50 +155,12 @@ Vector2 coords_to_screen(Vector2 v) {
 	return v;
 }
 
-void set_mode(byte mode)
-{
-	union REGS regs;
-	regs.h.ah = SET_MODE;
-	regs.h.al = mode;
-	int86(VIDEO_INT, &regs, &regs);
-}
-
 char debug_text[64];
 
-void debug_pixel(byte color) {
-	graphic_buffer[debug_cursor] = color;
-	graphic_buffer[debug_cursor + 1] = color;
-	debug_cursor = (debug_cursor + 2) % 32;
-}
 
-
-int failsBounds(int x, int y) {
+/*int failsBounds(int x, int y) {
 	return (x < 0) || (x >= SCREEN_WIDTH) || (y < 0) || (y >= SCREEN_HEIGHT);
-}
-
-
-void setup_palette(byte *unshaded_colors) {
-	int i, k;
-	byte r, g, b,
-		rstep, gstep, bstep;
-	outp(0x03c8, 128);
-	for(i = 0; i < 8; i++) {
-		r = unshaded_colors[(i * 3)],
-		g = unshaded_colors[(i*3) + 1],
-		b = unshaded_colors[(i*3) + 2],
-		rstep = r >> 5,
-		gstep = g >> 5,
-		bstep = b >> 5;
-		for(k = 0; k < 16; k++) {
-			outp(0x03c9, r);
-			outp(0x03c9, g);
-			outp(0x03c9, b);
-			r -= rstep;
-			g -= gstep;
-			b -= bstep;
-		}
-	}
-}
+}*/
 
 byte depth_to_shade(float depth) {
 	depth = 16 * min(depth, darkness_depth) / darkness_depth;
@@ -453,8 +389,8 @@ void draw_wall_screen(int ax, int ay, int bx, int by, int gradient_type, byte co
 		higher_bottom = min(trape_heights[ax+1], trape_heights[bx-1]);
 	byte grad_color_h, *drawn_color;
 
-	if(failsBounds(ax,ay)) return;
-	if(failsBounds(bx,by)) return;
+	/*if(failsBounds(ax,ay)) return;
+	if(failsBounds(bx,by)) return;*/
 	
 	if(gradient_type == GRAD_H) {
 		drawn_color = &grad_color_h;
