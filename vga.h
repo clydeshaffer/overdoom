@@ -14,10 +14,17 @@
 #define NUM_COLORS 256
 
 #define pixel(x,y) graphic_buffer[(y<<8)+(y<<6)+x]
+#define bufpixel(buf,x,y) buf[(y<<8)+(y<<6)+x]
 
 typedef unsigned char byte;
 
+typedef struct raw_color
+{
+    byte r, g, b;
+} raw_color;
+
 extern byte graphic_buffer[64000L];
+extern byte *VGA;
 
 void wait_retrace();
 
@@ -27,4 +34,9 @@ void set_mode(byte mode);
 
 void setup_palette(byte *unshaded_colors);
 
+void get_palette(raw_color *dest);
+
+void submit_palette(raw_color *raw_palette);
+
+void fade_out();
 #endif

@@ -1081,6 +1081,8 @@ void main()
 			}
 		}
 	}
+	fade_out();
+	wait_retrace();
 	set_mode(VGA_TEXT_MODE);
 	deinit_keyboard();
 	free(keymap);
