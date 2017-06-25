@@ -67,18 +67,11 @@ void setup_palette(byte *unshaded_colors) {
 
 void get_palette(raw_color *dest) {
     union REGS regs;
-    if(changed_palette) {
-       int i;
-       for(i = 0; i < 256; i++) {
-        dest[i] = new_palette[i];
-       } 
-    } else {
-        regs.x.ax = 0x1017;
-        regs.x.bx = 0;
-        regs.x.cx = 0x100;
-        regs.x.dx = (int) dest;
-        int86(0x10, &regs, &regs);
-    }
+    regs.x.ax = 0x1017;
+    regs.x.bx = 0;
+    regs.x.cx = 0xff;
+    regs.x.dx = (int) dest;
+    int86(0x10, &regs, &regs);
 }
 
 void submit_palette(raw_color *raw_palette) {
@@ -97,6 +90,7 @@ void submit_palette(raw_color *raw_palette) {
 void fade_out() {
     int i, k;
     raw_color grabbed_palette[256];
+    memset(grabbed_palette, 0, sizeof(raw_color) * 256);
     get_palette(grabbed_palette);
     for(i = 0; i < 16; i ++) {
         for(k = 0; k < 256; k++) {

@@ -6,6 +6,7 @@
 #include "Vector2.h"
 #include "keyb.h"
 #include "vga.h"
+#include "blaster.h"
 
 #define GRAD_NONE 0
 #define GRAD_H 1
@@ -937,10 +938,33 @@ int load_sectors_from_file(char* filename) {
 
 void main()
 {
+	static FM_Instrument instrument = {
+        0x11, 0x01, 0x8a, 0x40,
+        0xf1, 0xf1, 0x11, 0xb3,
+        0x00, 0x00, 0x06, 0x00,
+        0x00, 0x00, 0x00, 0x00 
+    };
+    /*int notes[12] = {0x16B,0x181,0x198,0x1B0,0x1CA,0x1E5,
+             0x202,0x220,0x241,0x263,0x287,0x2AE};*/
+    int notes[28] = {
+    	0x16B,0x16B,0x2AE,0x16B,0x16B,0x287,0x16B,0x16B,
+    	0x263,0x16B,0x16B,0x241,0x16B,0x16B,0x241,0x263,
+        0x16B,0x16B,0x2AE,0x16B,0x16B,0x287,0x16B,0x16B,
+    	0x263,0x16B,0x16B,0x241};
+    /*word noteLengths[12] = { 5, 10, 5, 5, 5, 5, 10, 5, 5, 10, 10, 5};*/
+    word noteLengths[28] = {
+    	5, 5, 5, 5, 5, 5, 5, 5,
+    	5, 5, 5, 5, 5, 5, 5, 5,
+    	5, 5, 5, 5, 5, 5, 5, 5,
+    	5, 5, 5, 25
+    };
+    int noteIndex = 0;
+    int noteTimer = noteLengths[0];
+
 	int i, keystates = 0;
 	bool found_next_sector = false;
 	int* keymap;
-	float frame_duration;
+	word frame_duration;
 	byte unshaded_colors[] = {
 		64,  0,  0,
 		 0, 64,  0,
@@ -995,6 +1019,18 @@ void main()
 				viewerAngleCos = cos(viewerAngle);
 
 	/*draw_wall(2, 3, -10, 10, 13);*/
+
+	Sb_Get_Params();
+
+    Sb_FM_Reset();
+
+    Sb_FM_Set_Voice(0,&instrument);
+    Sb_FM_Set_Voice(1,&instrument);
+    Sb_FM_Set_Voice(11,&instrument);
+    Sb_FM_Set_Voice(12,&instrument);
+
+    Sb_FM_Key_On(0,notes[11],2);
+
 	while(!(keystates & QUIT_KEY)) {
 		
 		start = *my_clock;
@@ -1033,9 +1069,19 @@ void main()
 		wait_retrace();
 
 		show_buffer();
-		frame_duration = (*my_clock - start) / 18.2;
-		/*printf("%.3f\r", frame_duration);*/ 
+		
+		frame_duration = (*my_clock - start); /*IN UNITS OF 18.2 PER SECOND*/
+		/*printf("%.3f\r", frame_duration);*/
 		/*printf("%s\r", debug_text);*/
+
+
+		noteTimer -= frame_duration * 2;
+		if(noteTimer <= 0) {
+            Sb_FM_Key_Off(0);
+            noteIndex = (noteIndex + 1);
+            Sb_FM_Key_On(0,notes[noteIndex % 28] + ((32 * (noteIndex / 28)) % 128),2);
+            noteTimer += noteLengths[noteIndex % 28];
+        }
 
 		keystates = update_keystates(keystates,keymap, 8);
 
@@ -1081,6 +1127,13 @@ void main()
 			}
 		}
 	}
+	Sb_FM_Key_Off(0);
+    Sb_FM_Key_Off(1);
+    Sb_FM_Key_Off(11);
+    Sb_FM_Key_Off(12);
+
+    Sb_FM_Reset();
+    wait_retrace();
 	fade_out();
 	wait_retrace();
 	set_mode(VGA_TEXT_MODE);

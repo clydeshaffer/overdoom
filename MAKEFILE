@@ -1,2 +1,2 @@
-juego2.exe: juego2.c vga.c keyb.c vector2.c
-	tcc -mh juego2.c vga.c keyb.c vector2.c
+juego2.exe: juego2.c vga.c keyb.c vector2.c blaster.c
+	tcc -mh juego2.c vga.c keyb.c vector2.c blaster.c
