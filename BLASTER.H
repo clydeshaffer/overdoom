@@ -11,6 +11,8 @@ typedef struct {
     unsigned char filler[6];
 } FM_Instrument;
 
+void WriteFM(int chip, int addr, unsigned char data);
+
 int Sb_Get_Params(void);
 
 void Sb_FM_Reset(void);
@@ -23,6 +25,8 @@ void Sb_FM_Voice_Volume(int voice, int vol);
 
 void Sb_FM_Set_Voice(int voice_num, FM_Instrument *ins);
 
+extern int note_octaves[];
 
+extern int note_fnums[];
 
 #endif

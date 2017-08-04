@@ -5,6 +5,7 @@
 
 #include "Vector2.h"
 #include "keyb.h"
+#include "mouse.h"
 #include "vga.h"
 #include "blaster.h"
 
@@ -936,30 +937,45 @@ int load_sectors_from_file(char* filename) {
 	return 1;
 }
 
+void interrupt do_nothing(void)
+{
+	return;
+}
+
+static void interrupt (far *oldmouse)(void);
+
 void main()
 {
 	static FM_Instrument instrument = {
-        0x11, 0x01, 0x8a, 0x40,
-        0xf1, 0xf1, 0x11, 0xb3,
-        0x00, 0x00, 0x06, 0x00,
-        0x00, 0x00, 0x00, 0x00 
+        0x00, 0x01, 0x10, 0x00,
+        0xf0, 0xf8, 0x77, 0x77,
+        0x00, 0x00, 0x00, 0x00,
+        0x98, 0x00, 0x00, 0x31 
+    };
+
+    static FM_Instrument impactSound = {
+        0x09, 0x01, 0x00, 0x00,
+        0xf8, 0xf8, 0x88, 0x66,
+        0x01, 0x00, 0x00, 0x00,
+        0x98, 0x00, 0x00, 0x31 
     };
     /*int notes[12] = {0x16B,0x181,0x198,0x1B0,0x1CA,0x1E5,
              0x202,0x220,0x241,0x263,0x287,0x2AE};*/
     int notes[28] = {
-    	0x16B,0x16B,0x2AE,0x16B,0x16B,0x287,0x16B,0x16B,
-    	0x263,0x16B,0x16B,0x241,0x16B,0x16B,0x241,0x263,
-        0x16B,0x16B,0x2AE,0x16B,0x16B,0x287,0x16B,0x16B,
-    	0x263,0x16B,0x16B,0x241};
+    	32, 33, 34, 35, 36, 37, 38,
+    	32, 33, 34, 35, 36, 37, 38,
+    	32, 33, 34, 35, 36, 37, 38,
+    	32, 33, 34, 35, 36, 37, 38};
     /*word noteLengths[12] = { 5, 10, 5, 5, 5, 5, 10, 5, 5, 10, 10, 5};*/
     word noteLengths[28] = {
-    	5, 5, 5, 5, 5, 5, 5, 5,
-    	5, 5, 5, 5, 5, 5, 5, 5,
-    	5, 5, 5, 5, 5, 5, 5, 5,
-    	5, 5, 5, 25
+    	4, 4, 2, 2, 2, 2, 4, 4,
+    	4, 4, 2, 2, 2, 2, 4, 4,
+    	4, 4, 2, 2, 2, 2, 4, 4,
+    	4, 4, 4, 8
     };
     int noteIndex = 0;
     int noteTimer = noteLengths[0];
+    int didFall = 0;
 
 	int i, keystates = 0;
 	bool found_next_sector = false;
@@ -1001,6 +1017,9 @@ void main()
 	keymap[6] = 77;
 	keymap[7] = 57;
 
+	oldmouse=getvect(0x33);
+	/*setvect(0x33, do_nothing);*/
+
 	init_keyboard();
 
 	set_mode(VGA_256_COLOR_MODE);
@@ -1024,10 +1043,12 @@ void main()
 
     Sb_FM_Reset();
 
+    WriteFM(0, 1, 1 << 5);
+
     Sb_FM_Set_Voice(0,&instrument);
-    Sb_FM_Set_Voice(1,&instrument);
+    Sb_FM_Set_Voice(1,&impactSound);
     Sb_FM_Set_Voice(11,&instrument);
-    Sb_FM_Set_Voice(12,&instrument);
+    Sb_FM_Set_Voice(12,&impactSound);
 
     Sb_FM_Key_On(0,notes[11],2);
 
@@ -1075,12 +1096,12 @@ void main()
 		/*printf("%s\r", debug_text);*/
 
 
-		noteTimer -= frame_duration * 2;
+		noteTimer -= frame_duration;
 		if(noteTimer <= 0) {
             Sb_FM_Key_Off(0);
-            noteIndex = (noteIndex + 1);
-            Sb_FM_Key_On(0,notes[noteIndex % 28] + ((32 * (noteIndex / 28)) % 128),2);
-            noteTimer += noteLengths[noteIndex % 28];
+            noteIndex = (noteIndex + 1) % 28;
+            Sb_FM_Key_On(0,note_fnums[notes[noteIndex]],note_octaves[notes[noteIndex]]);
+            noteTimer += noteLengths[noteIndex];
         }
 
 		keystates = update_keystates(keystates,keymap, 8);
@@ -1088,36 +1109,41 @@ void main()
 		old_position = viewerPosition;
 		if(viewer_z_pos > world_sector_list[current_sector].floor + viewer_height) {
 			viewer_z_pos--;
+			didFall = 1;
 		} else {
-
+			if(didFall == 1) {
+				Sb_FM_Key_Off(1);
+				Sb_FM_Key_On(1,note_fnums[44],note_octaves[44]);
+			}
+			didFall = 0;
 			if(keystates & FORWARD_KEY) {
-				viewerPosition.x += cos(viewerAngle + PI / 2);
-				viewerPosition.y += sin(viewerAngle + PI / 2);
+				viewerPosition.x += cos(viewerAngle + PI / 2) * frame_duration;
+				viewerPosition.y += sin(viewerAngle + PI / 2) * frame_duration;
 			}
 
 			if(keystates & BACKWARD_KEY) {
-				viewerPosition.x -= cos(viewerAngle + PI / 2);
-				viewerPosition.y -= sin(viewerAngle + PI / 2);
+				viewerPosition.x -= cos(viewerAngle + PI / 2) * frame_duration;
+				viewerPosition.y -= sin(viewerAngle + PI / 2) * frame_duration;
 			} 
 
 			if(keystates & STRAFELEFT_KEY) {
-				viewerPosition.x -= cos(viewerAngle);
-				viewerPosition.y -= sin(viewerAngle);
+				viewerPosition.x -= cos(viewerAngle) * frame_duration;
+				viewerPosition.y -= sin(viewerAngle) * frame_duration;
 			} 
 
 			if(keystates & STRAFERIGHT_KEY) {
-				viewerPosition.x += cos(viewerAngle);
-				viewerPosition.y += sin(viewerAngle);
+				viewerPosition.x += cos(viewerAngle) * frame_duration;
+				viewerPosition.y += sin(viewerAngle) * frame_duration;
 			}
 
 			if(keystates & TURNLEFT_KEY) {
-				viewerAngle += 0.1;
+				viewerAngle += 0.1 * frame_duration;
 				viewerAngleSin = sin(viewerAngle);
 				viewerAngleCos = cos(viewerAngle);
 			}
 
 			if(keystates & TURNRIGHT_KEY) {
-				viewerAngle -= 0.1;
+				viewerAngle -= 0.1 * frame_duration;
 				viewerAngleSin = sin(viewerAngle);
 				viewerAngleCos = cos(viewerAngle);
 			}
@@ -1138,6 +1164,7 @@ void main()
 	wait_retrace();
 	set_mode(VGA_TEXT_MODE);
 	deinit_keyboard();
+	setvect(0x33,oldmouse);
 	free(keymap);
 	return;
 }
