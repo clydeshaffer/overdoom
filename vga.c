@@ -54,9 +54,9 @@ void setup_palette(byte *unshaded_colors) {
             outp(0x03c9, r);
             outp(0x03c9, g);
             outp(0x03c9, b);
-            new_palette[npi].r = r;
+            /*new_palette[npi].r = r;
             new_palette[npi].g = g;
-            new_palette[npi].b = b;
+            new_palette[npi].b = b;*/
             npi++;
             r -= rstep;
             g -= gstep;
@@ -92,11 +92,11 @@ void fade_out() {
     raw_color grabbed_palette[256];
     memset(grabbed_palette, 0, sizeof(raw_color) * 256);
     get_palette(grabbed_palette);
-    for(i = 0; i < 16; i ++) {
+    for(i = 0; i < 64; i ++) {
         for(k = 0; k < 256; k++) {
-            if(grabbed_palette[k].r > 3) grabbed_palette[k].r -= 4;
-            if(grabbed_palette[k].g > 3) grabbed_palette[k].g -= 4;
-            if(grabbed_palette[k].b > 3) grabbed_palette[k].b -= 4;
+            if(grabbed_palette[k].r > 0) grabbed_palette[k].r -= 1;
+            if(grabbed_palette[k].g > 0) grabbed_palette[k].g -= 1;
+            if(grabbed_palette[k].b > 0) grabbed_palette[k].b -= 1;
         }
         submit_palette(grabbed_palette);
         wait_retrace();
