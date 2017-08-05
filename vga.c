@@ -87,16 +87,16 @@ void submit_palette(raw_color *raw_palette) {
     }
 }
 
-void fade_out() {
+void fade_out(int speed) {
     int i, k;
     raw_color grabbed_palette[256];
     memset(grabbed_palette, 0, sizeof(raw_color) * 256);
     get_palette(grabbed_palette);
-    for(i = 0; i < 64; i ++) {
+    for(i = 0; i < (64 / speed); i ++) {
         for(k = 0; k < 256; k++) {
-            if(grabbed_palette[k].r > 0) grabbed_palette[k].r -= 1;
-            if(grabbed_palette[k].g > 0) grabbed_palette[k].g -= 1;
-            if(grabbed_palette[k].b > 0) grabbed_palette[k].b -= 1;
+            if(grabbed_palette[k].r > speed-1) grabbed_palette[k].r -= speed;
+            if(grabbed_palette[k].g > speed-1) grabbed_palette[k].g -= speed;
+            if(grabbed_palette[k].b > speed-1) grabbed_palette[k].b -= speed;
         }
         submit_palette(grabbed_palette);
         wait_retrace();

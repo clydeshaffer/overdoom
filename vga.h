@@ -38,5 +38,5 @@ void get_palette(raw_color *dest);
 
 void submit_palette(raw_color *raw_palette);
 
-void fade_out();
+void fade_out(int speed);
 #endif
