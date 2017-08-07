@@ -54,11 +54,16 @@ word *my_clock=(word *)0x0000046C;
 byte ceiling_color = 52;
 byte ground_color = 114;
 byte wall_color = 1;
-byte wall_color_left = 0;
-byte wall_color_right = 0;
+int wall_color_left = 0;
+int wall_color_right = 0;
 
 byte trape_heights[SCREEN_WIDTH];
-byte *gradient_buffer;
+int *gradient_buffer;
+
+byte bayer[16] = {0, 8, 2, 10,
+				12, 4, 14, 6,
+				3, 11, 1, 9,
+				15, 7, 13, 5};
 
 int world_vertex_count;
 Vector2* world_vertex_list;
@@ -169,13 +174,21 @@ int randOrderer(int x) {
 	return st;
 }
 
+static byte sample_gradient(int x, int y, int t) {
+	/*byte c = (byte) (gradient_buffer[t] >> 4);
+	byte frac = (byte) (gradient_buffer[t] & 15);
+	if(bayer[((y % 4) * 4) + (x % 4)] <= frac) c++;
+	return c;*/
+	return (gradient_buffer[t] >> 4) + (bayer[((y % 4) * 4) + (x % 4)] <= ((byte) (gradient_buffer[t] & 15)));
+}
+
 /*int failsBounds(int x, int y) {
 	return (x < 0) || (x >= SCREEN_WIDTH) || (y < 0) || (y >= SCREEN_HEIGHT);
 }*/
 
 byte depth_to_shade(float depth) {
 	depth = 16 * min(depth, darkness_depth) / darkness_depth;
-	if(depth > 15) depth = 15;
+	if(depth > 14) depth = 14;
 	else if(depth < 1) depth = 1;
 	return (byte)((int) depth);
 }
@@ -197,8 +210,8 @@ void vert(int xpos, int ystart, int ylen, byte color, int gradient_mode) {
 	debug_delay();
 	#endif
 	for(i = 0; i < ylen; i++) {
-		drawn_color[GRAD_V] = gradient_buffer[g + randOrderer((xpos ^ g) % 32) % 8];
-		drawn_color[GRAD_H] = gradient_buffer[xpos + randOrderer((xpos ^ g) % 32) % 8];
+		drawn_color[GRAD_V] = sample_gradient(xpos, g, g);
+		drawn_color[GRAD_H] = sample_gradient(xpos, g, xpos);
 		g++;
 		graphic_buffer[k + xpos] = drawn_color[gradient_mode];
 		k += SCREEN_WIDTH;
@@ -224,8 +237,7 @@ void grad_rect_h(int xpos, int ypos, int width, int height) {
 		/*memset(&(graphic_buffer[addr]), color, width);*/
 		/*memcpy(&(graphic_buffer[addr]), gradient_buffer+xpos, width);*/
 		for(k = 0; k < width; k++) {
-			graphic_buffer[addr + k] = gradient_buffer[(xpos+k) + randOrderer(((xpos+k) ^ ypos) % 32) % 8];
-			ypos++;
+			graphic_buffer[addr + k] = sample_gradient(xpos+k, ypos+i, xpos+k);
 		}
 		addr += SCREEN_WIDTH;
 		#ifdef DEBUGDELAY
@@ -239,7 +251,7 @@ void grad_rect_v(int xpos, int ypos, int width, int height) {
 	for(i = 0; i < height; i++) {
 		/*memset(&(graphic_buffer[addr]), gradient_buffer[ypos+i], width);*/
 		for(k = 0; k < width; k++) {
-			graphic_buffer[addr + k] = gradient_buffer[ypos+i + randOrderer(((xpos+k) ^ (ypos+i)) % 32) % 8];
+			graphic_buffer[addr + k] = sample_gradient(xpos+k, ypos+i, ypos+i);
 		}
 		addr += SCREEN_WIDTH;
 	}
@@ -389,6 +401,83 @@ void interpolate_buffer(int ax, int ay, int bx, int by, byte *target_array) {
 		*pmajor += *smajor;
 		if(px > 0 && px < SCREEN_WIDTH) {
 			target_array[px] = clamp(py, 0, SCREEN_WIDTH);
+		}
+	}
+}
+
+void make_gradient(int ax, int ay, int bx, int by, int *target_array) {
+	int dx = bx - ax,
+		dy = (by << 4) - (ay << 4),
+		absx = abs(dx),
+		absy = abs(dy),
+		sx = sgn(dx),
+		sy = sgn(dy),
+		stx = absx >> 1,
+		sty = absy >> 1,
+		i, px = ax, py = ay << 4;
+
+	int *dmajor, *smajor, *sminor, *stminor, *absmajor, *absminor, *pmajor, *pminor;
+
+	ay = ay<<4;
+	by = by<<4;
+
+	if(ay == by) {
+		/*memset(target_array+min(ax, bx), by, absx);*/
+		for(i = ax; i <= bx; i++) {
+			target_array[i] = ay;
+		}
+		return;
+	}
+
+	if(abs(dx) > abs(dy)) {
+		dmajor = &dx;
+		smajor = &sx;
+		sminor = &sy;
+		stminor = &sty;
+		absmajor = &absx;
+		absminor = &absy;	
+		pmajor = &px;
+		pminor = &py;	
+	} else {
+		dmajor = &dy;
+		smajor = &sy;
+		sminor = &sx;
+		stminor = &stx;
+		absmajor = &absy;
+		absminor = &absx;	
+		pmajor = &py;
+		pminor = &px;
+	}
+
+	target_array[ax] = ay;
+
+	if(ax < bx) {
+		for(i = 0; i <= bx; i++) {
+			target_array[i] = ay;
+		}
+
+		for(i = ax; i < SCREEN_WIDTH; i++) {
+			target_array[i] = by;
+		}
+	} else {
+		for(i = 0; i <= ax; i++) {
+			target_array[i] = by;
+		}
+
+		for(i = bx; i < SCREEN_WIDTH; i++) {
+			target_array[i] = ay;
+		}
+	}
+
+	for(i = 0; i <= abs(*dmajor); i ++) {
+		*stminor += *absminor;
+		if(*stminor >= *absmajor) {
+			*stminor -= *absmajor;
+			*pminor += *sminor;
+		}
+		*pmajor += *smajor;
+		if(px > 0 && px < SCREEN_WIDTH) {
+			target_array[px] = py;
 		}
 	}
 }
@@ -673,9 +762,9 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 
 
 	if(top_on_screen && (flags & CEILING)) {
-		interpolate_buffer(0, 31 - (int) (ceiling / 8), 116, 15, gradient_buffer);
+		make_gradient(0, 31 - (int) (ceiling / 8), 116, 15, gradient_buffer);
 		for(i = 0; i < 100; i++) {
-			gradient_buffer[200 - i] = gradient_buffer[i];
+			gradient_buffer[199 - i] = gradient_buffer[i];
 		}
 		/*interpolate_buffer(0, 31, 100, 15, gradient_buffer);*/
 		/*memset(gradient_buffer, 0, SCREEN_WIDTH);*/
@@ -686,9 +775,9 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	memset(trape_heights, (byte) portal_bottom, SCREEN_WIDTH);
 	if(bottom_on_screen) {
 		if(flags & FLOOR) {
-			interpolate_buffer(0, 31 + (int) (floor / 8), 116, 15, gradient_buffer);
+			make_gradient(0, 31 + (int) (floor / 8), 116, 15, gradient_buffer);
 			for(i = 0; i < 100; i++) {
-				gradient_buffer[200 - i] = gradient_buffer[i];
+				gradient_buffer[199 - i] = gradient_buffer[i];
 			}
 			/*interpolate_buffer(100, 15, SCREEN_HEIGHT-1, 31, gradient_buffer);*/
 			draw_wall_screen(lowerA.x, lowerA.y, lowerB.x, lowerB.y, GRAD_V, ground_color); /* draw ground */
@@ -699,7 +788,7 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	}
 
 	if(flags & WALL) {
-		interpolate_buffer(a_clip, wall_color_left, b_clip, wall_color_right, gradient_buffer);
+		make_gradient(a_clip, wall_color_left, b_clip, wall_color_right, gradient_buffer);
 
 		if(top_on_screen) {
 			draw_wall_screen(
@@ -790,7 +879,7 @@ void draw_sector(Sector s, float leftEdge, float rightEdge, int portal_top, int 
 					wall_color = base_color;
 					wall_color_left = color_left;
 					wall_color_right = color_right;
-					interpolate_buffer(subLeftEdge * 180 + 160, color_left, subRightEdge * 180 + 160, color_right,gradient_buffer);
+					/*make_gradient(subLeftEdge * 180 + 160, color_left, subRightEdge * 180 + 160, color_right,gradient_buffer);*/
 					draw_wall(world_vertex_list[s.corners[i]],
 						world_vertex_list[s.corners[(i+1)%s.corner_count]],
 						s.floor, s.ceiling,
@@ -817,7 +906,7 @@ void draw_sector(Sector s, float leftEdge, float rightEdge, int portal_top, int 
 					wall_color = color_left;
 					wall_color_left = color_left;
 					wall_color_right = color_right;
-					interpolate_buffer(subLeftEdge * 180 + 160, color_left, subRightEdge * 180 + 160, color_right, gradient_buffer);
+					/*make_gradient(subLeftEdge * 180 + 160, color_left, subRightEdge * 180 + 160, color_right, gradient_buffer);*/
 					draw_wall(world_vertex_list[s.corners[i]],
 						world_vertex_list[s.corners[(i+1)%s.corner_count]],
 						s.floor, s.ceiling,
@@ -1028,8 +1117,8 @@ void main()
 		return;
 	}
 
-	gradient_buffer = malloc(SCREEN_WIDTH);
-	memset(gradient_buffer, 0, SCREEN_WIDTH);
+	gradient_buffer = malloc(sizeof(int) * SCREEN_WIDTH);
+	memset(gradient_buffer, 0, sizeof(int) * SCREEN_WIDTH);
 
 	keymap = malloc(sizeof(int) * sizeof(int) * 8);
 	memset(keymap, 0, sizeof(int) * sizeof(int) * 8);
