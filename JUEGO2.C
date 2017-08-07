@@ -159,6 +159,15 @@ Vector2 coords_to_screen(Vector2 v) {
 
 char debug_text[64];
 
+int randOrder[32] = {6, 1, 6, 4, 5, 7, 3, 4, 4, 5, 6, 7, 7, 4, 0, 7, 2, 2, 0, 6, 5, 3, 2, 0, 3, 1, 5, 0, 1, 3, 1, 2};
+
+int randOrderer(int x) {
+	int st = x;
+	st ^= st << 13;
+	st ^= st >> 17;
+	st ^= st << 5;
+	return st;
+}
 
 /*int failsBounds(int x, int y) {
 	return (x < 0) || (x >= SCREEN_WIDTH) || (y < 0) || (y >= SCREEN_HEIGHT);
@@ -176,7 +185,6 @@ void vert(int xpos, int ystart, int ylen, byte color, int gradient_mode) {
 	int k, g;
 	byte drawn_color[3];
 	drawn_color[GRAD_NONE] = color;
-	drawn_color[GRAD_H] = gradient_buffer[xpos];
 	if(ylen <= 0) return;
 	if(ystart + ylen < 0) return;
 	ystart = maxOf(ystart, 0);
@@ -189,7 +197,8 @@ void vert(int xpos, int ystart, int ylen, byte color, int gradient_mode) {
 	debug_delay();
 	#endif
 	for(i = 0; i < ylen; i++) {
-		drawn_color[GRAD_V] = gradient_buffer[g];
+		drawn_color[GRAD_V] = gradient_buffer[g + randOrderer((xpos ^ g) % 32) % 8];
+		drawn_color[GRAD_H] = gradient_buffer[xpos + randOrderer((xpos ^ g) % 32) % 8];
 		g++;
 		graphic_buffer[k + xpos] = drawn_color[gradient_mode];
 		k += SCREEN_WIDTH;
@@ -210,10 +219,14 @@ void rect(int xpos, int ypos, int width, int height, byte color) {
 }
 
 void grad_rect_h(int xpos, int ypos, int width, int height) {
-	int i, addr = times320(ypos) + xpos;
+	int i, k, addr = times320(ypos) + xpos;
 	for(i = 0; i < height; i++) {
 		/*memset(&(graphic_buffer[addr]), color, width);*/
-		memcpy(&(graphic_buffer[addr]), gradient_buffer+xpos, width);
+		/*memcpy(&(graphic_buffer[addr]), gradient_buffer+xpos, width);*/
+		for(k = 0; k < width; k++) {
+			graphic_buffer[addr + k] = gradient_buffer[(xpos+k) + randOrderer(((xpos+k) ^ ypos) % 32) % 8];
+			ypos++;
+		}
 		addr += SCREEN_WIDTH;
 		#ifdef DEBUGDELAY
 		debug_delay();
@@ -222,9 +235,12 @@ void grad_rect_h(int xpos, int ypos, int width, int height) {
 }
 
 void grad_rect_v(int xpos, int ypos, int width, int height) {
-	int i, addr = times320(ypos) + xpos;
+	int i,k, addr = times320(ypos) + xpos;
 	for(i = 0; i < height; i++) {
-		memset(&(graphic_buffer[addr]), gradient_buffer[ypos+i], width);
+		/*memset(&(graphic_buffer[addr]), gradient_buffer[ypos+i], width);*/
+		for(k = 0; k < width; k++) {
+			graphic_buffer[addr + k] = gradient_buffer[ypos+i + randOrderer(((xpos+k) ^ (ypos+i)) % 32) % 8];
+		}
 		addr += SCREEN_WIDTH;
 	}
 }
@@ -573,7 +589,7 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	Vector2 leftEndPoint;
 	Vector2 rightEndPoint;
 	float a_clip, b_clip, far_depth;
-	int lower_top, higher_bottom;
+	int lower_top, higher_bottom, i;
 	bool top_on_screen, bottom_on_screen;
 
 	floor -= viewer_z_pos;
@@ -655,18 +671,27 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	lower_top = maxOf(pointA.y, pointB.y);
 	higher_bottom = minOf(lowerA.y, lowerB.y);
 
+
 	if(top_on_screen && (flags & CEILING)) {
-		/*interpolate_buffer(0, 31, lower_top, 31 - depth_to_shade(far_depth), gradient_buffer);*/
+		interpolate_buffer(0, 31 - (int) (ceiling / 8), 116, 15, gradient_buffer);
+		for(i = 0; i < 100; i++) {
+			gradient_buffer[200 - i] = gradient_buffer[i];
+		}
+		/*interpolate_buffer(0, 31, 100, 15, gradient_buffer);*/
 		/*memset(gradient_buffer, 0, SCREEN_WIDTH);*/
 		interpolate_buffer(pointA.x, pointA.y, pointB.x, pointB.y, trape_heights);
-		draw_wall_screen(pointA.x, portal_top, pointB.x, portal_top, GRAD_NONE, ceiling_color); /* ceiling */
+		draw_wall_screen(pointA.x, portal_top, pointB.x, portal_top, GRAD_V, ceiling_color); /* ceiling */
 	}
 
 	memset(trape_heights, (byte) portal_bottom, SCREEN_WIDTH);
 	if(bottom_on_screen) {
 		if(flags & FLOOR) {
-			/*interpolate_buffer(higher_bottom, 31 - depth_to_shade(far_depth), SCREEN_HEIGHT-1, 31, gradient_buffer);*/
-			draw_wall_screen(lowerA.x, lowerA.y, lowerB.x, lowerB.y, GRAD_NONE, ground_color); /* draw ground */
+			interpolate_buffer(0, 31 + (int) (floor / 8), 116, 15, gradient_buffer);
+			for(i = 0; i < 100; i++) {
+				gradient_buffer[200 - i] = gradient_buffer[i];
+			}
+			/*interpolate_buffer(100, 15, SCREEN_HEIGHT-1, 31, gradient_buffer);*/
+			draw_wall_screen(lowerA.x, lowerA.y, lowerB.x, lowerB.y, GRAD_V, ground_color); /* draw ground */
 		}
 		interpolate_buffer(lowerA.x, lowerA.y, lowerB.x, lowerB.y, trape_heights);
 	} else if(higher_bottom < 0) {
@@ -674,7 +699,7 @@ void draw_wall(Vector2 pointA, Vector2 pointB, float floor, float ceiling, float
 	}
 
 	if(flags & WALL) {
-		/*interpolate_buffer(a_clip, wall_color_left, b_clip, wall_color_right, gradient_buffer);*/
+		interpolate_buffer(a_clip, wall_color_left, b_clip, wall_color_right, gradient_buffer);
 
 		if(top_on_screen) {
 			draw_wall_screen(
@@ -1160,7 +1185,7 @@ void main()
 
     Sb_FM_Reset();
     wait_retrace();
-	fade_out();
+	fade_out(4);
 	wait_retrace();
 	set_mode(VGA_TEXT_MODE);
 	deinit_keyboard();
