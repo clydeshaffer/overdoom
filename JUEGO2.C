@@ -147,7 +147,7 @@ float viewer_z_pos = 1;
 float viewer_height = 10;
 float viewer_knee = 5;
 
-const float darkness_depth = 400;
+const float darkness_depth = 800;
 
 Vector2 viewerPosition;
 Sector* viewerCurrentSector; 
@@ -188,7 +188,7 @@ static byte sample_gradient(int x, int y, int t) {
 
 byte depth_to_shade(float depth) {
 	depth = 16 * min(depth, darkness_depth) / darkness_depth;
-	if(depth > 14) depth = 14;
+	if(depth > 15) depth = 15;
 	else if(depth < 1) depth = 1;
 	return (byte)((int) depth);
 }

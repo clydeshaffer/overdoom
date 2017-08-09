@@ -47,9 +47,9 @@ void setup_palette(byte *unshaded_colors) {
         r = unshaded_colors[(i * 3)],
         g = unshaded_colors[(i*3) + 1],
         b = unshaded_colors[(i*3) + 2],
-        rstep = r >> 5,
-        gstep = g >> 5,
-        bstep = b >> 5;
+        rstep = r >> 4,
+        gstep = g >> 4,
+        bstep = b >> 4;
         for(k = 0; k < 16; k++) {
             outp(0x03c9, r);
             outp(0x03c9, g);
