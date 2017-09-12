@@ -1,4 +1,5 @@
 #include "vga.h"
+#include "stdlib.h"
 #include <dos.h>
 
 #define pixel(x,y) graphic_buffer[(y<<8)+(y<<6)+x]
