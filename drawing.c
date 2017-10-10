@@ -16,6 +16,7 @@
 #define times320(y) ((y<<8)+(y<<6))
 #define clamp(x,a,b) (a>x)?a:((x<b)?x:b)
 
+
 byte trape_heights[SCREEN_WIDTH];
 byte *gradient_buffer;
 
@@ -25,6 +26,11 @@ byte bayer[16] = {0, 8, 2, 10,
                 15, 7, 13, 5};
 
 const coord_t darkness_depth = 800;
+
+void debug_delay() {
+    wait_retrace();
+    show_buffer();
+}
 
 /* return true if sub overlaps super, and set sub bounds to intersection
 otherwise return false */
@@ -67,6 +73,15 @@ bool test_portal_viable(viewport portal) {
     return true;
 }
 
+void highlight_portal(viewport portal, byte color) {
+    int i;
+    memset(graphic_buffer + portal.left + times320(portal.top), color, portal.right - portal.left);
+    memset(graphic_buffer + portal.left + times320(portal.bottom), color, portal.right - portal.left);
+    for(i = portal.top; i <= portal.bottom; i++) {
+        pixel(portal.left, i) = color;
+        pixel(portal.right, i) = color;
+    }
+}
 
 void printf_view(viewport portal) {
     printf("Portal is\n\t%d %d\n\t%d %d\n", portal);
@@ -221,12 +236,14 @@ void grad_rect_h(int xpos, int ypos, int width, int height) {
         /*for(k = 0; k < width; k++) {
             graphic_buffer[addr + k] = sample_gradient(xpos+k, ypos+i, xpos+k);
         }*/
+
         addr += SCREEN_WIDTH;
         #ifdef DEBUGDELAY
         debug_delay();
         #endif
     }
 }
+
 
 void grad_rect_v(int xpos, int ypos, int width, int height) {
     int i,k=0, addr = times320(ypos) + xpos, lim = width;
@@ -237,18 +254,40 @@ void grad_rect_v(int xpos, int ypos, int width, int height) {
     lim = 1 << k;
     for(i = 0; i < height; i++) {
         k=0;
-        /*memset(&(graphic_buffer[addr]), gradient_buffer[ypos+i], width);*/
         for(k = 0; (k < width) && (k < 4); k++) {
             graphic_buffer[addr + k] = gradient_buffer[ypos+i+times320((xpos+k)%4)];
+            #ifdef DEBUGDELAY
+            debug_delay();
+            #endif
         }
         for(k = 4; k < lim; k*=2) {
-            /*graphic_buffer[addr + k] = graphic_buffer[addr + k - 4];*/
             memcpy(&(graphic_buffer[addr+k]), &(graphic_buffer[addr]), k);
+            #ifdef DEBUGDELAY
+            debug_delay();
+            #endif
         }
         memcpy(&(graphic_buffer[addr+k]), &(graphic_buffer[addr]), width - lim);
         addr += SCREEN_WIDTH;
     }
 }
+
+/*
+void grad_rect_v(int xpos, int ypos, int width, int height) {
+    int i,k=0, addr = times320(ypos) + xpos, lim = width;
+    lim = 1 << k;
+    for(i = 0; i < height; i++) {
+        long pat = 0;
+        for(k = 0; k < 4; k++) {
+            graphic_buffer[addr + k] = gradient_buffer[ypos+i+times320((xpos+k)%4)];
+        }
+        pat = *((long*) (graphic_buffer+addr));
+        
+        for(k = 0; k < width; k += 4) {
+            *((long*) (graphic_buffer+addr+k)) = pat;
+        }
+        addr += SCREEN_WIDTH;
+    }
+}*/
 
 void draw_line2(int ax, int ay, int bx, int by, byte color) {
     int dx = bx - ax,
@@ -513,7 +552,9 @@ void draw_wall_screen(int ax, int ay, int bx, int by, int gradient_type, byte co
         sty = absy >> 1,
         i, height, px = ax, py = ay,
         lower_top = max(ay,by),
-        higher_bottom = min(trape_heights[ax+1], trape_heights[bx-1]);
+        higher_bottom = min(trape_heights[ax+1], trape_heights[bx-1]),
+        higher_bottom2 = higher_bottom,
+        lower_top2 = lower_top;
     byte grad_color_h, *drawn_color;
 
     /*if(failsBounds(ax,ay)) return;
@@ -548,6 +589,7 @@ void draw_wall_screen(int ax, int ay, int bx, int by, int gradient_type, byte co
             }
         } else {
             for(i = 0; i <= absy; i ++) {
+
                 stx += absx;
                 if(stx >= absy) {
                     stx -= absy;
@@ -621,6 +663,7 @@ void draw_wall(point2 pointA, point2 pointB, coord_t floor, coord_t ceiling, vie
     if(a_top_screen.y > portal.bottom && b_top_screen.y > portal.bottom) return;
     if(a_bot_screen.y < portal.top && b_bot_screen.y < portal.top) return;
 
+
     if(a_top_screen.x < b_top_screen.x) {
         left_shade = depth_to_shade(pointA.y << 1) + base_color;
         right_shade = depth_to_shade(pointB.y << 1) + base_color;
@@ -631,6 +674,9 @@ void draw_wall(point2 pointA, point2 pointB, coord_t floor, coord_t ceiling, vie
 
     x_sort(&a_top_screen, &b_top_screen);
     x_sort(&a_bot_screen, &b_bot_screen);
+
+    if(a_top_screen.x > portal.right) return;
+    if(b_top_screen.x < portal.left) return;
 
     /* definitely on screen now... hopefully */
     left_side = a_top_screen.x;

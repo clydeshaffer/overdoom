@@ -23,7 +23,7 @@ typedef struct viewport
 
 
 extern byte *gradient_buffer;
-
+void highlight_portal(viewport portal, byte color);
 bool portal_overlap(viewport *sub, viewport *super);
 bool clip_line_to_viewport(point2 *pointA, point2 *pointB, viewport portal);
 byte sample_gradient(int x, int y, int t);

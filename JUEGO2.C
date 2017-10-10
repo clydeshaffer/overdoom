@@ -14,8 +14,8 @@
 char keystates[32];
 char old_keystates[32];
 
-point3 camerap = {0, 0, 0};
-unsigned char cnt = 0;
+point3 camerap = {-20, 0, 84};
+unsigned char cnt = 0x22;
 
 int sgn(int x) {
 	if(x > 0) return 1;
@@ -29,9 +29,10 @@ point2 screenshift(point2 a) {
     return a;
 }
 
-
+int sectorstack = 0;
 void recursive_sector_draw(int current_sector, viewport portal, int limit) {
     int i;
+    pixel(0, sectorstack) = (byte) current_sector+1;
     if(limit & (1 << current_sector)) return;
     if(portal.top == portal.bottom) return;
     if(portal.left == portal.right) return;
@@ -47,24 +48,37 @@ void recursive_sector_draw(int current_sector, viewport portal, int limit) {
 
         if(world_sector_list[current_sector].neighbors[i] != -1) {
             int neighbor = world_sector_list[current_sector].neighbors[i];
+            viewport neighbor_portal;
             coord_t ceiling = world_sector_list[current_sector].ceiling;
             coord_t floor = world_sector_list[current_sector].floor;
             point3 a_top = worldToLocal(pnt_223(pntA, ceiling), camerap, cnt);
             point3 b_top = worldToLocal(pnt_223(pntB, ceiling), camerap, cnt);
+            gap neighbor_heights;
+            neighbor_heights.top = world_sector_list[neighbor].ceiling;
+            neighbor_heights.bottom = world_sector_list[neighbor].floor;
+            if(neighbor_heights.top < ceiling) {
+                a_top.y = neighbor_heights.top - camerap.y;
+                b_top.y = neighbor_heights.top - camerap.y;
+            }
             if(a_top.z > 0 || b_top.z > 0) {
                 if(view_cone(&a_top, &b_top)) {
                     if(a_top.z > 0 && b_top.z > 0) {
                         point2 a_top_screen = localToScreen(a_top, SCREEN_WIDTH, SCREEN_HEIGHT);   
                         point2 b_top_screen = localToScreen(b_top, SCREEN_WIDTH, SCREEN_HEIGHT);
                         if(a_top_screen.x < b_top_screen.x) {
-                            gap neighbor_heights;
-                            viewport neighbor_portal;
+                            
+                            
                             point3 a_bot = a_top;
                             point3 b_bot = b_top;
                             point2 a_bot_screen; 
                             point2 b_bot_screen;
+                            
                             a_bot.y = floor - camerap.y;
                             b_bot.y = floor - camerap.y;
+                            if(neighbor_heights.bottom > floor) {
+                                a_bot.y = neighbor_heights.bottom - camerap.y;
+                                b_bot.y = neighbor_heights.bottom - camerap.y;
+                            }
                             a_bot_screen = localToScreen(a_bot, SCREEN_WIDTH, SCREEN_HEIGHT);   
                             b_bot_screen = localToScreen(b_bot, SCREEN_WIDTH, SCREEN_HEIGHT);
                             neighbor_portal.left = a_top_screen.x;
@@ -84,13 +98,14 @@ void recursive_sector_draw(int current_sector, viewport portal, int limit) {
                             }
 
                             if(portal_overlap(&neighbor_portal, &portal)) {
-
-                                neighbor_heights.top = world_sector_list[neighbor].ceiling;
-                                neighbor_heights.bottom = world_sector_list[neighbor].floor;
-                                
+                                highlight_portal(neighbor_portal, 15);
+                                sectorstack++;
                                 recursive_sector_draw(neighbor, neighbor_portal,limit | (1 << current_sector));
+                                pixel(0, sectorstack) = 0;
+                                sectorstack--;
                                 check_and_draw_wall(pntA, pntB, world_sector_list[current_sector].floor, world_sector_list[current_sector].ceiling,
                                     &neighbor_heights, 16, camerap, cnt, portal);
+                                
                             }
                         }
                     }
@@ -106,7 +121,7 @@ void recursive_sector_draw(int current_sector, viewport portal, int limit) {
 int main(int argc, char** argv) {
 
 	
-	unsigned int ang = 0;
+	unsigned int ang = 0x44;
 	int i, current_sector = 0;
 
 	byte unshaded_colors[] = {
@@ -182,6 +197,7 @@ int main(int argc, char** argv) {
 		show_buffer();
 		memset(graphic_buffer, 0, 64000L);
 		memcpy(old_keystates, keystates, 32);
+        /*printf("%ld, %ld, %ld\n0x%x\n", camerap, cnt);*/
         get_keys_hit(keystates);
 	}
 
