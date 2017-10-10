@@ -25,3 +25,5 @@ Computations are done using fixed point arithmetic. Angles are represented as a 
 At the start of the program, 128 palette colors are dedicated to 16 shades of 8 colors to use for gradients. The gradients are used to represent distance from the camera, with the walls getting darker as they get further away. Ordered Dithering is employed to sell the blend effect a bit better.
 
 Controls are WASD to strafe around, with the left and right arrow keys used to rotate the view.
+
+Run make and then JUEGO2.EXE to test it out
